@@ -24,6 +24,13 @@ GMAIL_CREDENTIALS_PATH = _path("GMAIL_CREDENTIALS_PATH", "credentials.json")
 GMAIL_TOKEN_PATH = _path("GMAIL_TOKEN_PATH", "token.json")
 GMAIL_SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
 GMAIL_WATCHED_ADDRESS = os.getenv("GMAIL_WATCHED_ADDRESS", "lina@palad.co")
+# Palad team members' own replies (e.g. cs@palad.co) land in this inbox via
+# CC on lead threads. They are never inbound lead replies and must be
+# excluded before any Pipeline/BD Database matching is attempted — matching
+# on a "palad" domain token against Palad's own lead database is meaningless
+# and produces false positives (confirmed in testing: a coincidental 0.62
+# fuzzy score against an unrelated company).
+PALAD_INTERNAL_DOMAIN = os.getenv("PALAD_INTERNAL_DOMAIN", GMAIL_WATCHED_ADDRESS.split("@")[-1].lower())
 # On the very first run (no watermark yet), how far back to look instead of
 # pulling the entire inbox history. Override via env if you want more/less.
 INITIAL_LOOKBACK_DAYS = int(os.getenv("INITIAL_LOOKBACK_DAYS", "7"))

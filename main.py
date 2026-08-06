@@ -144,7 +144,16 @@ def _process_message(msg, leads, bd_leads, notion_client, anthropic_client, dry_
                 notion_write.append_action_log(notion_client, match.lead, note)
         return
 
-    # Genuine reply — match against pipeline first.
+    # Genuine reply — but first exclude Palad's own team members. Their
+    # replies land in this inbox via CC on lead threads; they are never
+    # inbound lead replies and must not be matched/flagged as one.
+    sender_domain = msg.from_email.split("@")[-1].lower() if "@" in msg.from_email else ""
+    if sender_domain == config.PALAD_INTERNAL_DOMAIN:
+        summary["counts"]["irrelevant"] += 1
+        log.info("INTERNAL msg=%s sender=%s is a Palad-internal address, not a lead reply — classified Irrelevant",
+                  msg.id, msg.from_email)
+        return
+
     match = notion_write.match_lead(msg.from_email, msg.from_name, leads, subject=msg.subject)
     log.info("GENUINE msg=%s match_rung=%s detail=%s", msg.id, match.rung, match.detail)
     if not match.lead:
