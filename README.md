@@ -5,7 +5,10 @@ replies to cold outreach, updates the Palad BD Lead Pipeline / BD Database in
 Notion, and sends a batched Slack digest. Designed to run unattended via cron
 on a Mac Mini.
 
-Read-only Gmail scope — this service never sends or modifies email.
+Uses Gmail's `gmail.modify` scope, but only to flip the UNREAD label based
+on classification (read = bounce/auto-reply/irrelevant, unread = a genuine
+reply that needs your attention). It never sends, replies to, or deletes
+anything.
 
 ## Modules
 
@@ -173,5 +176,27 @@ guessing:
 - Fails loudly: Notion/Gmail/Anthropic errors are logged, added to
   `summary["errors"]`, surfaced in the Slack digest, and produce a non-zero
   exit code for cron alerting. No bare `except: pass` anywhere.
-- Read-only Gmail scope only; no send capability exists in this codebase.
+- No send/reply/delete capability exists in this codebase — `gmail.modify`
+  is used only to toggle the UNREAD label (see "Read/unread marking" below).
+  This is a deliberate deviation from the original brief's `gmail.readonly`,
+  made per explicit user request on 2026-08-07.
 - Notion writes throttled to ≤3 req/s in `NotionClient`.
+
+## Read/unread marking
+
+After Notion is updated (or, in `--dry-run`, would-be updated), each message
+is marked in Gmail based on its classification:
+
+| Outcome | Marked |
+|---|---|
+| Bounce | Read |
+| Auto-reply / OOO | Read |
+| Irrelevant (no match, incl. Palad-internal senders) | Read |
+| Genuine reply matched to Pipeline (interested/declined/unsubscribe/unclear) | Unread |
+| BD Database re-engagement | Unread |
+
+This requires the broader `gmail.modify` OAuth scope instead of
+`gmail.readonly`. **If you already have a `token.json` from before this
+change, delete it and re-run `python gmail_poll.py` once to re-consent** —
+the old token doesn't carry the new scope and Gmail API calls will fail
+with an insufficient-permissions error until you do.

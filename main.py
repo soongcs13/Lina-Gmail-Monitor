@@ -1,6 +1,7 @@
 """Orchestrates one run of the Palad lead monitor: poll Gmail, classify,
 match against the Pipeline DB, write (or dry-run print) the resulting
-Notion updates, and send one batched Slack digest.
+Notion updates, mark each message read/unread based on its classification,
+and send one batched Slack digest.
 
 Usage:
     python main.py --dry-run          # classify + match, print intended writes, write nothing
@@ -88,13 +89,25 @@ def run(dry_run: bool) -> int:
 
     for msg in messages:
         try:
-            _process_message(msg, leads, bd_leads, notion_client, anthropic_client, dry_run, summary)
+            mark_as = _process_message(msg, leads, bd_leads, notion_client, anthropic_client, dry_run, summary)
         except Exception as exc:
             log.exception("Unhandled error processing message %s", msg.id)
             summary["errors"].append(f"Failed processing message {msg.id} ({msg.subject!r}): {exc}")
             # Do not advance the watermark past a message we failed to fully
             # process — it will be retried on the next run.
             continue
+
+        try:
+            if dry_run:
+                log.info("[DRY RUN] Would mark message %s as %s", msg.id, mark_as)
+            elif mark_as == "read":
+                gmail_poll.mark_read(service, msg.id)
+            elif mark_as == "unread":
+                gmail_poll.mark_unread(service, msg.id)
+        except Exception as exc:
+            log.error("Failed to set read/unread state for message %s: %s", msg.id, exc)
+            summary["errors"].append(f"Failed to mark message {msg.id} as {mark_as}: {exc}")
+
         state = gmail_poll.advance_state(state, msg)
         gmail_poll.save_state(state)
 
@@ -115,7 +128,7 @@ def _process_message(msg, leads, bd_leads, notion_client, anthropic_client, dry_
                 f"Bounce message {msg.id} ({msg.subject!r}): could not extract the failed recipient address, "
                 "so it could not be matched to a Pipeline lead. Needs manual review."
             )
-            return
+            return "read"
         match = notion_write.match_lead(msg.bounced_recipient, "", leads, subject=msg.subject)
         log.info("BOUNCE msg=%s bounced_recipient=%s match_rung=%s detail=%s",
                   msg.id, msg.bounced_recipient, match.rung, match.detail)
@@ -128,7 +141,7 @@ def _process_message(msg, leads, bd_leads, notion_client, anthropic_client, dry_
             else:
                 notion_write.set_status(notion_client, match.lead, config.STATUS_BOUNCED)
                 notion_write.append_action_log(notion_client, match.lead, line)
-        return
+        return "read"
 
     if deterministic == "auto_reply":
         summary["counts"]["auto_reply"] += 1
@@ -142,7 +155,7 @@ def _process_message(msg, leads, bd_leads, notion_client, anthropic_client, dry_
                 log.info("[DRY RUN] Would append action-log note (no status change) for %s", match.lead.page_id)
             else:
                 notion_write.append_action_log(notion_client, match.lead, note)
-        return
+        return "read"
 
     # Genuine reply — but first exclude Palad's own team members. Their
     # replies land in this inbox via CC on lead threads; they are never
@@ -152,7 +165,7 @@ def _process_message(msg, leads, bd_leads, notion_client, anthropic_client, dry_
         summary["counts"]["irrelevant"] += 1
         log.info("INTERNAL msg=%s sender=%s is a Palad-internal address, not a lead reply — classified Irrelevant",
                   msg.id, msg.from_email)
-        return
+        return "read"
 
     match = notion_write.match_lead(msg.from_email, msg.from_name, leads, subject=msg.subject)
     log.info("GENUINE msg=%s match_rung=%s detail=%s", msg.id, match.rung, match.detail)
@@ -173,12 +186,12 @@ def _process_message(msg, leads, bd_leads, notion_client, anthropic_client, dry_
                 "kind": "bd_reengagement", "company": bd_match.lead.name, "email": msg.from_email,
                 "subject": msg.subject, "reason": "Existing BD Database contact sent a new message — Follow up? set to Yes.",
             })
-            return
+            return "unread"
 
         summary["counts"]["irrelevant"] += 1
         log.info("No Pipeline or BD Database match for message %s from %s — classified Irrelevant, dropped",
                   msg.id, msg.from_email)
-        return
+        return "read"
 
     if anthropic_client is None:
         intent_result = {"intent": "unclear", "confidence": "low",
@@ -252,6 +265,11 @@ def _process_message(msg, leads, bd_leads, notion_client, anthropic_client, dry_
             "kind": "unclear", "company": lead.company_name, "email": msg.from_email,
             "subject": msg.subject, "reason": intent_result.get("reasoning", "Could not confidently classify intent."),
         })
+
+    # interested/declined/unsubscribe/unclear are all genuine replies from a
+    # matched lead — every one of them is flagged in the digest and needs
+    # the user's attention.
+    return "unread"
 
 
 def schema_check():

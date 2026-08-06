@@ -1,9 +1,10 @@
 """Gmail OAuth handling and inbox polling.
 
-Read-only scope only (gmail.readonly). This module never sends or modifies
-mail. Watermark state (last processed internalDate + message IDs seen at
-that exact timestamp) is persisted locally so re-runs never reprocess the
-same message.
+Uses gmail.modify scope (only to change the UNREAD label based on
+classification) — never used to send, reply to, or delete mail. Watermark
+state (last processed internalDate + message IDs seen at that exact
+timestamp) is persisted locally so re-runs never reprocess the same
+message.
 """
 import base64
 import json
@@ -313,6 +314,30 @@ def poll_new_messages(service, state: dict) -> list:
 
     messages.sort(key=lambda m: m.internal_date_ms)
     return messages
+
+
+def mark_read(service, message_id: str):
+    """Removes the UNREAD label. Used for bounces, auto-replies, and
+    Irrelevant messages — nothing the user needs to look at."""
+    try:
+        service.users().messages().modify(
+            userId="me", id=message_id, body={"removeLabelIds": ["UNREAD"]}
+        ).execute()
+    except HttpError as exc:
+        log.error("Failed to mark message %s as read: %s", message_id, exc)
+        raise
+
+
+def mark_unread(service, message_id: str):
+    """Adds the UNREAD label. Used for genuine replies that need the user's
+    attention (interested/declined/unsubscribe/unclear/BD re-engagement)."""
+    try:
+        service.users().messages().modify(
+            userId="me", id=message_id, body={"addLabelIds": ["UNREAD"]}
+        ).execute()
+    except HttpError as exc:
+        log.error("Failed to mark message %s as unread: %s", message_id, exc)
+        raise
 
 
 if __name__ == "__main__":

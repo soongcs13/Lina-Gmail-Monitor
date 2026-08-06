@@ -22,7 +22,11 @@ def _path(env_name: str, default: str) -> Path:
 # --- Gmail ---
 GMAIL_CREDENTIALS_PATH = _path("GMAIL_CREDENTIALS_PATH", "credentials.json")
 GMAIL_TOKEN_PATH = _path("GMAIL_TOKEN_PATH", "token.json")
-GMAIL_SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
+# NOTE: upgraded from gmail.readonly per explicit user request, to mark
+# messages read (bounce/auto-reply/irrelevant) or unread (genuine replies
+# needing attention). gmail.modify permits label changes on messages —
+# still never used to send, reply, or delete anything.
+GMAIL_SCOPES = ["https://www.googleapis.com/auth/gmail.modify"]
 GMAIL_WATCHED_ADDRESS = os.getenv("GMAIL_WATCHED_ADDRESS", "lina@palad.co")
 # Palad team members' own replies (e.g. cs@palad.co) land in this inbox via
 # CC on lead threads. They are never inbound lead replies and must be
