@@ -35,7 +35,10 @@ NOTION_API_BASE = "https://api.notion.com/v1"
 NOTION_RATE_LIMIT_PER_SEC = 3
 
 PIPELINE_DB_ID = os.getenv("PIPELINE_DB_ID", "17e6d34b-aa60-438d-b2fe-5b383d566a36")
-BD_DATABASE_ID = os.getenv("BD_DATABASE_ID", "3215734a-d555-8015-8f98-ec27cd7249e6")
+# The ID in the original brief (3215734a-d555-8015-8f98-ec27cd7249e6) turned
+# out to be a page, not the database — confirmed via /v1/search against the
+# live integration on 2026-08-07. This is the real database ID.
+BD_DATABASE_ID = os.getenv("BD_DATABASE_ID", "3215734a-d555-80f7-a2a1-c4de6375a2ab")
 
 # Pipeline DB property names. These are best guesses from the build brief —
 # CONFIRM against the live schema (`python main.py --schema-check`) before
