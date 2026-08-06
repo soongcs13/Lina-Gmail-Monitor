@@ -6,6 +6,7 @@ No LLM call is ever spent on a bounce or auto-reply.
 import json
 import logging
 import re
+from typing import Optional
 
 import anthropic
 
@@ -40,7 +41,7 @@ def has_delivery_status_indicator(msg: GmailMessage) -> bool:
     return msg.has_delivery_status_part
 
 
-def classify_deterministic(msg: GmailMessage) -> str | None:
+def classify_deterministic(msg: GmailMessage) -> Optional[str]:
     """Returns 'bounce', 'auto_reply', or None (genuine — needs LLM intent)."""
     if _BOUNCE_SENDER_RE.search(msg.from_email) or _BOUNCE_SUBJECT_RE.search(msg.subject):
         return "bounce"
@@ -70,7 +71,7 @@ def _strip_code_fences(text: str) -> str:
     return text
 
 
-def classify_intent(msg: GmailMessage, client: anthropic.Anthropic | None = None) -> dict:
+def classify_intent(msg: GmailMessage, client: Optional[anthropic.Anthropic] = None) -> dict:
     """Calls the Anthropic API to classify intent for a genuine reply.
 
     Returns {"intent": ..., "confidence": ..., "reasoning": ..., "error": bool}.
