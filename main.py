@@ -104,8 +104,18 @@ def _process_message(msg, leads, notion_client, anthropic_client, dry_run, summa
 
     if deterministic == "bounce":
         summary["counts"]["bounce"] += 1
-        match = notion_write.match_lead(msg.from_email, msg.from_name, leads)
-        log.info("BOUNCE msg=%s match_rung=%s detail=%s", msg.id, match.rung, match.detail)
+        # The bounce's sender is always mailer-daemon — match against the
+        # original recipient address extracted from the bounce body instead.
+        if not msg.bounced_recipient:
+            log.warning("BOUNCE msg=%s has no extractable recipient address — flagging for manual review", msg.id)
+            summary["errors"].append(
+                f"Bounce message {msg.id} ({msg.subject!r}): could not extract the failed recipient address, "
+                "so it could not be matched to a Pipeline lead. Needs manual review."
+            )
+            return
+        match = notion_write.match_lead(msg.bounced_recipient, "", leads)
+        log.info("BOUNCE msg=%s bounced_recipient=%s match_rung=%s detail=%s",
+                  msg.id, msg.bounced_recipient, match.rung, match.detail)
         if match.lead:
             line = notion_write.format_event_log_line(
                 f"Bounce detected from inbound message ({msg.subject!r})"

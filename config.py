@@ -41,7 +41,9 @@ BD_DATABASE_ID = os.getenv("BD_DATABASE_ID", "3215734a-d555-8015-8f98-ec27cd7249
 # CONFIRM against the live schema (`python main.py --schema-check`) before
 # enabling real writes. Override via env vars if the live schema differs.
 PIPELINE_PROP_EMAIL = os.getenv("PIPELINE_PROP_EMAIL", "Email")
-PIPELINE_PROP_COMPANY = os.getenv("PIPELINE_PROP_COMPANY", "Company Name")
+# Confirmed against the live schema on 2026-08-07: the title property (the
+# lead/company identifier) is called "Name", not "Company Name".
+PIPELINE_PROP_COMPANY = os.getenv("PIPELINE_PROP_COMPANY", "Name")
 PIPELINE_PROP_STATUS = os.getenv("PIPELINE_PROP_STATUS", "Status")
 PIPELINE_PROP_ACTION_LOG = os.getenv("PIPELINE_PROP_ACTION_LOG", "Action Log")
 

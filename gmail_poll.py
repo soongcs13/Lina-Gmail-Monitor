@@ -8,6 +8,7 @@ same message.
 import base64
 import json
 import logging
+import re
 import tempfile
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -37,6 +38,11 @@ class GmailMessage:
     body_text: str = ""
     has_delivery_status_part: bool = False
     raw_from: str = ""
+    # For bounces only: the original recipient address that failed to
+    # deliver, extracted from the delivery-status part (or best-effort
+    # fallbacks). This — not from_email, which is mailer-daemon — is what
+    # must be matched against Pipeline leads.
+    bounced_recipient: str = ""
 
 
 def get_gmail_service():
@@ -143,6 +149,54 @@ def _find_delivery_status_part(payload: dict) -> bool:
     return False
 
 
+_EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+")
+
+
+def _get_delivery_status_text(payload: dict) -> str:
+    """Returns the decoded body of the message/delivery-status MIME part, if any."""
+    if not payload:
+        return ""
+    if payload.get("mimeType") == "message/delivery-status":
+        data = payload.get("body", {}).get("data")
+        if data:
+            try:
+                return base64.urlsafe_b64decode(data.encode("utf-8")).decode("utf-8", errors="replace")
+            except Exception:
+                return ""
+    for part in payload.get("parts", []) or []:
+        text = _get_delivery_status_text(part)
+        if text:
+            return text
+    return ""
+
+
+def _extract_bounced_recipient(payload: dict, headers: dict, body_text: str) -> str:
+    """For a bounce message, finds the original recipient address that
+    failed to deliver — NOT the mailer-daemon sender. That's what must be
+    matched against Pipeline leads. Tries, in order: the machine-readable
+    delivery-status part, the X-Failed-Recipients header, then a best-effort
+    scan of the human-readable body text."""
+    ds_text = _get_delivery_status_text(payload)
+    if ds_text:
+        match = re.search(r"(?:Final|Original)-Recipient:\s*(?:rfc822|RFC822)\s*;\s*(\S+)", ds_text)
+        if match:
+            return match.group(1).strip().rstrip(".").lower()
+
+    failed_header = headers.get("x-failed-recipients", "")
+    if failed_header:
+        return failed_header.split(",")[0].strip().lower()
+
+    for line in body_text.splitlines():
+        if re.search(r"delivered to|recipient|address", line, re.I):
+            m = _EMAIL_RE.search(line)
+            if m:
+                candidate = m.group(0).lower()
+                if "mailer-daemon" not in candidate and "postmaster" not in candidate:
+                    return candidate
+
+    return ""
+
+
 def _extract_body_text(payload: dict) -> str:
     if not payload:
         return ""
@@ -186,6 +240,14 @@ def parse_message(raw_message: dict) -> GmailMessage:
     raw_from = headers.get("from", "")
     from_name, from_email = _parse_email_address(raw_from)
     subject = headers.get("subject", "")
+    body_text = _extract_body_text(payload)
+    has_delivery_status = _find_delivery_status_part(payload)
+
+    # Attempted unconditionally: classify_deterministic() can flag a message
+    # as a bounce via subject text alone (no delivery-status part present),
+    # so gating this on has_delivery_status would miss those. It's a no-op
+    # cost for non-bounce messages — the result is simply unused.
+    bounced_recipient = _extract_bounced_recipient(payload, headers, body_text)
 
     return GmailMessage(
         id=raw_message["id"],
@@ -195,9 +257,10 @@ def parse_message(raw_message: dict) -> GmailMessage:
         from_name=from_name,
         subject=subject,
         headers=headers,
-        body_text=_extract_body_text(payload),
-        has_delivery_status_part=_find_delivery_status_part(payload),
+        body_text=body_text,
+        has_delivery_status_part=has_delivery_status,
         raw_from=raw_from,
+        bounced_recipient=bounced_recipient,
     )
 
 
