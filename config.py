@@ -24,6 +24,9 @@ GMAIL_CREDENTIALS_PATH = _path("GMAIL_CREDENTIALS_PATH", "credentials.json")
 GMAIL_TOKEN_PATH = _path("GMAIL_TOKEN_PATH", "token.json")
 GMAIL_SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
 GMAIL_WATCHED_ADDRESS = os.getenv("GMAIL_WATCHED_ADDRESS", "lina@palad.co")
+# On the very first run (no watermark yet), how far back to look instead of
+# pulling the entire inbox history. Override via env if you want more/less.
+INITIAL_LOOKBACK_DAYS = int(os.getenv("INITIAL_LOOKBACK_DAYS", "7"))
 
 # --- Notion ---
 NOTION_TOKEN = os.getenv("NOTION_TOKEN", "")

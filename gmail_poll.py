@@ -206,12 +206,18 @@ def poll_new_messages(service, state: dict) -> list:
     watermark_ms = state.get("last_internal_date_ms", 0)
     processed_at_watermark = set(state.get("processed_ids_at_last_date", []))
 
-    query = "in:inbox"
-    if watermark_ms:
-        # Gmail's `after:` is day-granularity; go back a day for a safety margin
-        # and rely on internalDate for exact filtering below.
-        buffer_dt = datetime.utcfromtimestamp(watermark_ms / 1000) - timedelta(days=1)
-        query += f" after:{int(buffer_dt.timestamp())}"
+    if watermark_ms == 0:
+        # First run ever, no watermark yet: bound to a recent lookback window
+        # rather than pulling/reprocessing the entire inbox history.
+        lookback_dt = datetime.utcnow() - timedelta(days=config.INITIAL_LOOKBACK_DAYS)
+        watermark_ms = int(lookback_dt.timestamp() * 1000)
+        log.info("No prior watermark found — bounding first run to the last %d day(s)",
+                  config.INITIAL_LOOKBACK_DAYS)
+
+    # Gmail's `after:` is day-granularity; go back a day for a safety margin
+    # and rely on internalDate for exact filtering below.
+    buffer_dt = datetime.utcfromtimestamp(watermark_ms / 1000) - timedelta(days=1)
+    query = f"in:inbox after:{int(buffer_dt.timestamp())}"
 
     message_ids = []
     page_token = None
