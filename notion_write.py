@@ -4,6 +4,7 @@ non-2xx response raises — writes never fail silently.
 """
 import difflib
 import logging
+import re
 import time
 from dataclasses import dataclass
 from datetime import datetime
@@ -187,7 +188,20 @@ class MatchResult:
     detail: str = ""
 
 
-def match_lead(sender_email: str, sender_name: str, leads: list) -> MatchResult:
+# Palad's outreach subject convention is consistently
+# "<offer> — intro from Palad to <Company>", preserved (usually verbatim, at
+# the tail of the subject) through Re:/Fwd:/Automatic reply: prefixes added
+# by mail clients on the reply. Far more reliable than a sender's display
+# name, so it's checked as a fuzzy-match candidate alongside them.
+_SUBJECT_COMPANY_RE = re.compile(r"intro from palad to\s+(.+)$", re.I)
+
+
+def _subject_company_candidate(subject: str) -> str:
+    match = _SUBJECT_COMPANY_RE.search(subject or "")
+    return match.group(1).strip() if match else ""
+
+
+def match_lead(sender_email: str, sender_name: str, leads: list, subject: str = "") -> MatchResult:
     sender_email = (sender_email or "").strip().lower()
     sender_domain = _domain(sender_email)
 
@@ -203,8 +217,13 @@ def match_lead(sender_email: str, sender_name: str, leads: list) -> MatchResult:
             if lead.email and _domain(lead.email) == sender_domain:
                 return MatchResult(lead, "domain", f"domain {sender_domain} matches lead {lead.email}")
 
-    # Rung 3: fuzzy match of sender display name / domain against Company Name
-    candidates = [sender_name or "", sender_domain.split(".")[0] if sender_domain else ""]
+    # Rung 3: fuzzy match of sender display name / domain / subject-embedded
+    # company name against the Pipeline lead's Name.
+    candidates = [
+        sender_name or "",
+        sender_domain.split(".")[0] if sender_domain else "",
+        _subject_company_candidate(subject),
+    ]
     best_lead, best_ratio = None, 0.0
     for lead in leads:
         if not lead.company_name:

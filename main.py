@@ -113,7 +113,7 @@ def _process_message(msg, leads, notion_client, anthropic_client, dry_run, summa
                 "so it could not be matched to a Pipeline lead. Needs manual review."
             )
             return
-        match = notion_write.match_lead(msg.bounced_recipient, "", leads)
+        match = notion_write.match_lead(msg.bounced_recipient, "", leads, subject=msg.subject)
         log.info("BOUNCE msg=%s bounced_recipient=%s match_rung=%s detail=%s",
                   msg.id, msg.bounced_recipient, match.rung, match.detail)
         if match.lead:
@@ -129,7 +129,7 @@ def _process_message(msg, leads, notion_client, anthropic_client, dry_run, summa
 
     if deterministic == "auto_reply":
         summary["counts"]["auto_reply"] += 1
-        match = notion_write.match_lead(msg.from_email, msg.from_name, leads)
+        match = notion_write.match_lead(msg.from_email, msg.from_name, leads, subject=msg.subject)
         log.info("AUTO_REPLY msg=%s match_rung=%s detail=%s", msg.id, match.rung, match.detail)
         if match.lead:
             note = notion_write.format_event_log_line(
@@ -142,7 +142,7 @@ def _process_message(msg, leads, notion_client, anthropic_client, dry_run, summa
         return
 
     # Genuine reply — match against pipeline first (irrelevant if no match)
-    match = notion_write.match_lead(msg.from_email, msg.from_name, leads)
+    match = notion_write.match_lead(msg.from_email, msg.from_name, leads, subject=msg.subject)
     log.info("GENUINE msg=%s match_rung=%s detail=%s", msg.id, match.rung, match.detail)
     if not match.lead:
         summary["counts"]["irrelevant"] += 1
