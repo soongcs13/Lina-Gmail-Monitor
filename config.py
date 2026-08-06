@@ -70,6 +70,13 @@ BD_PROP_SELECT = os.getenv("BD_PROP_SELECT", "Select")
 BD_STATUS_NEW = os.getenv("BD_STATUS_NEW", "Not started")
 BD_SELECT_VALUE = os.getenv("BD_SELECT_VALUE", "BD")
 
+# For genuine replies that don't match Pipeline but DO match an existing BD
+# Database contact (already human-owned) — flip Follow up? to Yes rather
+# than writing anything else there.
+BD_PROP_EMAIL2 = os.getenv("BD_PROP_EMAIL2", "Email 2")
+BD_PROP_FOLLOW_UP = os.getenv("BD_PROP_FOLLOW_UP", "Follow up?")
+BD_STATUS_FOLLOW_UP_YES = os.getenv("BD_STATUS_FOLLOW_UP_YES", "Yes")
+
 # --- Anthropic ---
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-5")

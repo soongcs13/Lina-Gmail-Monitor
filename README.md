@@ -108,10 +108,13 @@ actually land in Slack rather than just being logged.
 ## Classification & matching
 
 Deterministic bounce/auto-reply detection and the lead-matching cascade
-(exact email → sender domain → fuzzy company-name → no match/Irrelevant) are
-implemented exactly as specified in the build brief, with every match
-decision logged (`match_rung` + detail) for audit. Genuine replies with no
-Pipeline match are dropped as Irrelevant and logged, never written.
+(exact email → sender domain → fuzzy company-name → no match) are
+implemented as specified in the build brief, plus one addition found during
+real-inbox testing: the fuzzy rung also checks a company name parsed out of
+Palad's own outreach subject convention ("... — intro from Palad to
+`<Company>`"), which turned out to be far more reliable than a sender's
+display name for forwarded replies. Every match decision is logged
+(`match_rung` + detail) for audit.
 
 Bounces and auto-replies write to the Pipeline DB automatically. `interested`
 replies do two things: set the Pipeline lead's `Status → Replied`, and
@@ -122,6 +125,15 @@ auto-create" default. The live BD Database schema already has a
 `gmail_message_id` field purpose-built for this, and once shown that, the
 call was made to auto-create directly. `declined` and `unsubscribe` still
 only ever touch the Pipeline DB.
+
+**Genuine replies with no Pipeline match** are checked against BD Database
+before being dropped as Irrelevant — a reply might come from a lead who
+already replied previously and was migrated there (human-owned, no more
+automated follow-up). If it matches a BD Database contact (same cascade,
+against `Email`/`Email 2`/`Name`), nothing is written to Pipeline or BD
+Database's other fields — only `Follow up?` is flipped to `Yes` on the
+existing entry, and it's flagged in the digest. Only messages that match
+neither database are dropped as Irrelevant.
 
 ## Confirmed against the live workspace (2026-08-07)
 

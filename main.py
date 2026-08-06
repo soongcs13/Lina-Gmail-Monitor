@@ -44,7 +44,7 @@ def run(dry_run: bool) -> int:
     run_time = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     summary = {"run_time": run_time, "dry_run": dry_run,
                "counts": {"bounce": 0, "auto_reply": 0, "interested": 0, "declined": 0,
-                          "unsubscribe": 0, "unclear": 0, "irrelevant": 0},
+                          "unsubscribe": 0, "unclear": 0, "irrelevant": 0, "bd_reengagement": 0},
                "flagged": [], "errors": []}
 
     try:
@@ -71,13 +71,16 @@ def run(dry_run: bool) -> int:
 
     notion_client = None
     leads = []
+    bd_leads = []
     try:
         notion_client = notion_write.NotionClient()
         leads = notion_write.fetch_pipeline_leads(notion_client)
         log.info("Fetched %d leads from Pipeline DB", len(leads))
+        bd_leads = notion_write.fetch_bd_leads(notion_client)
+        log.info("Fetched %d contacts from BD Database", len(bd_leads))
     except Exception as exc:
-        log.critical("Failed to fetch Pipeline leads from Notion: %s", exc)
-        summary["errors"].append(f"Failed to fetch Pipeline leads from Notion: {exc}")
+        log.critical("Failed to fetch leads from Notion: %s", exc)
+        summary["errors"].append(f"Failed to fetch leads from Notion: {exc}")
         notify.send_slack_digest(summary)
         return 1
 
@@ -85,7 +88,7 @@ def run(dry_run: bool) -> int:
 
     for msg in messages:
         try:
-            _process_message(msg, leads, notion_client, anthropic_client, dry_run, summary)
+            _process_message(msg, leads, bd_leads, notion_client, anthropic_client, dry_run, summary)
         except Exception as exc:
             log.exception("Unhandled error processing message %s", msg.id)
             summary["errors"].append(f"Failed processing message {msg.id} ({msg.subject!r}): {exc}")
@@ -99,7 +102,7 @@ def run(dry_run: bool) -> int:
     return 1 if summary["errors"] else 0
 
 
-def _process_message(msg, leads, notion_client, anthropic_client, dry_run, summary):
+def _process_message(msg, leads, bd_leads, notion_client, anthropic_client, dry_run, summary):
     deterministic = classify.classify_deterministic(msg)
 
     if deterministic == "bounce":
@@ -141,12 +144,31 @@ def _process_message(msg, leads, notion_client, anthropic_client, dry_run, summa
                 notion_write.append_action_log(notion_client, match.lead, note)
         return
 
-    # Genuine reply — match against pipeline first (irrelevant if no match)
+    # Genuine reply — match against pipeline first.
     match = notion_write.match_lead(msg.from_email, msg.from_name, leads, subject=msg.subject)
     log.info("GENUINE msg=%s match_rung=%s detail=%s", msg.id, match.rung, match.detail)
     if not match.lead:
+        # No Pipeline match — check whether this is a re-engagement from a
+        # lead already migrated to BD Database (human-owned). If so, don't
+        # write anything except flipping Follow up? to Yes; never touch
+        # Pipeline or create a duplicate BD Database row.
+        bd_match = notion_write.match_bd_lead(msg.from_email, msg.from_name, bd_leads, subject=msg.subject)
+        log.info("BD_DATABASE_CHECK msg=%s match_rung=%s detail=%s", msg.id, bd_match.rung, bd_match.detail)
+        if bd_match.lead:
+            summary["counts"]["bd_reengagement"] += 1
+            if dry_run:
+                log.info("[DRY RUN] Would set Follow up?=Yes on existing BD Database entry %s", bd_match.lead.page_id)
+            else:
+                notion_write.set_bd_follow_up(notion_client, bd_match.lead)
+            summary["flagged"].append({
+                "kind": "bd_reengagement", "company": bd_match.lead.name, "email": msg.from_email,
+                "subject": msg.subject, "reason": "Existing BD Database contact sent a new message — Follow up? set to Yes.",
+            })
+            return
+
         summary["counts"]["irrelevant"] += 1
-        log.info("No Pipeline match for message %s from %s — classified Irrelevant, dropped", msg.id, msg.from_email)
+        log.info("No Pipeline or BD Database match for message %s from %s — classified Irrelevant, dropped",
+                  msg.id, msg.from_email)
         return
 
     if anthropic_client is None:

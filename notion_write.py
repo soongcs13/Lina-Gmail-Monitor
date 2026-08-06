@@ -201,6 +201,36 @@ def _subject_company_candidate(subject: str) -> str:
     return match.group(1).strip() if match else ""
 
 
+def _fuzzy_best_match(candidates: list, items: list, get_name) -> tuple:
+    """Shared fuzzy-scoring core used against both Pipeline and BD Database
+    records: difflib ratio plus a containment bonus, taking the best-scoring
+    (item, candidate) pair across all items. Returns (best_item, best_score)."""
+    best_item, best_ratio = None, 0.0
+    for item in items:
+        name = get_name(item)
+        if not name:
+            continue
+        name_norm = name.strip().lower()
+        for candidate in candidates:
+            candidate = candidate.strip().lower()
+            if not candidate:
+                continue
+            ratio = difflib.SequenceMatcher(None, candidate, name_norm).ratio()
+            contains_bonus = 0.15 if (candidate in name_norm or name_norm in candidate) and len(candidate) > 2 else 0
+            score = min(1.0, ratio + contains_bonus)
+            if score > best_ratio:
+                best_ratio, best_item = score, item
+    return best_item, best_ratio
+
+
+def _fuzzy_candidates(sender_name: str, sender_domain: str, subject: str) -> list:
+    return [
+        sender_name or "",
+        sender_domain.split(".")[0] if sender_domain else "",
+        _subject_company_candidate(subject),
+    ]
+
+
 def match_lead(sender_email: str, sender_name: str, leads: list, subject: str = "") -> MatchResult:
     sender_email = (sender_email or "").strip().lower()
     sender_domain = _domain(sender_email)
@@ -219,30 +249,71 @@ def match_lead(sender_email: str, sender_name: str, leads: list, subject: str = 
 
     # Rung 3: fuzzy match of sender display name / domain / subject-embedded
     # company name against the Pipeline lead's Name.
-    candidates = [
-        sender_name or "",
-        sender_domain.split(".")[0] if sender_domain else "",
-        _subject_company_candidate(subject),
-    ]
-    best_lead, best_ratio = None, 0.0
-    for lead in leads:
-        if not lead.company_name:
-            continue
-        company_norm = lead.company_name.strip().lower()
-        for candidate in candidates:
-            candidate = candidate.strip().lower()
-            if not candidate:
-                continue
-            ratio = difflib.SequenceMatcher(None, candidate, company_norm).ratio()
-            contains_bonus = 0.15 if (candidate in company_norm or company_norm in candidate) and len(candidate) > 2 else 0
-            score = min(1.0, ratio + contains_bonus)
-            if score > best_ratio:
-                best_ratio, best_lead = score, lead
+    candidates = _fuzzy_candidates(sender_name, sender_domain, subject)
+    best_lead, best_ratio = _fuzzy_best_match(candidates, leads, lambda l: l.company_name)
     if best_lead and best_ratio >= config.COMPANY_FUZZY_THRESHOLD:
         return MatchResult(best_lead, "fuzzy_company",
                             f"score={best_ratio:.2f} candidates={candidates} company={best_lead.company_name!r}")
 
     return MatchResult(None, "no_match", f"no rung matched sender={sender_email} name={sender_name!r}")
+
+
+@dataclass
+class BDLead:
+    page_id: str
+    email: str
+    email2: str
+    name: str
+    follow_up: str
+
+
+def fetch_bd_leads(client: NotionClient, db_id: str = None) -> list:
+    db_id = db_id or config.BD_DATABASE_ID
+    raw_pages = client.query_all_pages(db_id)
+    leads = []
+    for page in raw_pages:
+        props = page.get("properties", {})
+        leads.append(BDLead(
+            page_id=page["id"],
+            email=_extract_email(props.get(config.BD_PROP_EMAIL)),
+            email2=_extract_email(props.get(config.BD_PROP_EMAIL2)),
+            name=_extract_text(props.get(config.BD_PROP_NAME)),
+            follow_up=_extract_text(props.get(config.BD_PROP_FOLLOW_UP)),
+        ))
+    return leads
+
+
+def match_bd_lead(sender_email: str, sender_name: str, bd_leads: list, subject: str = "") -> MatchResult:
+    """Same cascade as match_lead(), but against BD Database records (which
+    already replied and are human-owned) — used only to detect when an
+    existing BD contact has sent a new message, never to write status
+    changes there."""
+    sender_email = (sender_email or "").strip().lower()
+    sender_domain = _domain(sender_email)
+
+    for lead in bd_leads:
+        if sender_email and sender_email in (lead.email, lead.email2):
+            return MatchResult(lead, "exact_email", f"{sender_email} matches BD entry {lead.page_id}")
+
+    if sender_domain and sender_domain not in PERSONAL_EMAIL_DOMAINS:
+        for lead in bd_leads:
+            if (lead.email and _domain(lead.email) == sender_domain) or \
+               (lead.email2 and _domain(lead.email2) == sender_domain):
+                return MatchResult(lead, "domain", f"domain {sender_domain} matches BD entry {lead.page_id}")
+
+    candidates = _fuzzy_candidates(sender_name, sender_domain, subject)
+    best_lead, best_ratio = _fuzzy_best_match(candidates, bd_leads, lambda l: l.name)
+    if best_lead and best_ratio >= config.COMPANY_FUZZY_THRESHOLD:
+        return MatchResult(best_lead, "fuzzy_company",
+                            f"score={best_ratio:.2f} candidates={candidates} name={best_lead.name!r}")
+
+    return MatchResult(None, "no_match", f"no rung matched against BD Database sender={sender_email}")
+
+
+def set_bd_follow_up(client: NotionClient, bd_lead: BDLead, value: str = None):
+    value = value or config.BD_STATUS_FOLLOW_UP_YES
+    client.update_page(bd_lead.page_id, {config.BD_PROP_FOLLOW_UP: {"select": {"name": value}}})
+    bd_lead.follow_up = value
 
 
 # --- Writes ---
