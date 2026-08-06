@@ -3,7 +3,6 @@ read-modify-append writes. Throttled to Notion's ~3 req/s limit. Every
 non-2xx response raises — writes never fail silently.
 """
 import difflib
-import json
 import logging
 import time
 from dataclasses import dataclass
@@ -273,35 +272,42 @@ def set_status(client: NotionClient, lead: PipelineLead, new_status: str):
     lead.status = new_status
 
 
-def stage_bd_candidate(entry: dict, path=None):
-    """Appends a BD-Database candidate to a local staging file for manual
-    review/approval. Deduplicated on gmail_message_id so reruns don't
-    duplicate an already-staged entry.
+def find_bd_candidate_by_message_id(client: NotionClient, gmail_message_id: str) -> str:
+    """Returns the page_id of an existing BD Database entry for this Gmail
+    message, if one was already created (idempotency guard for
+    create_bd_candidate — reruns must never create a duplicate row)."""
+    payload = {
+        "filter": {
+            "property": config.BD_PROP_GMAIL_MESSAGE_ID,
+            "rich_text": {"equals": gmail_message_id},
+        }
+    }
+    resp = client._request("POST", f"/databases/{config.BD_DATABASE_ID}/query", json=payload)
+    results = resp.get("results", [])
+    return results[0]["id"] if results else None
 
-    NOTE: staging destination (local file vs. dedicated Notion view vs.
-    Slack-digest-only) is an open question for the user to confirm — see
-    README "Open questions". Local JSONL file is the default for now.
-    """
-    path = path or config.STAGED_BD_FILE_PATH
-    path.parent.mkdir(parents=True, exist_ok=True)
 
-    existing_ids = set()
-    if path.exists():
-        for line in path.read_text().splitlines():
-            if not line.strip():
-                continue
-            try:
-                existing_ids.add(json.loads(line).get("gmail_message_id"))
-            except json.JSONDecodeError:
-                continue
+def create_bd_candidate(client: NotionClient, lead: PipelineLead, gmail_message_id: str,
+                         email: str, name: str, notes: str) -> str:
+    """Creates a BD Database page for an 'interested' reply. Idempotent on
+    gmail_message_id: if a page already exists for this message, returns its
+    page_id instead of creating a duplicate."""
+    existing_id = find_bd_candidate_by_message_id(client, gmail_message_id)
+    if existing_id:
+        log.info("BD Database entry for message %s already exists (%s), skipping create",
+                  gmail_message_id, existing_id)
+        return existing_id
 
-    if entry.get("gmail_message_id") in existing_ids:
-        log.info("BD candidate for message %s already staged, skipping", entry.get("gmail_message_id"))
-        return False
-
-    with open(path, "a") as f:
-        f.write(json.dumps(entry) + "\n")
-    return True
+    properties = {
+        config.BD_PROP_NAME: {"title": [{"type": "text", "text": {"content": name}}]},
+        config.BD_PROP_EMAIL: {"email": email},
+        config.BD_PROP_GMAIL_MESSAGE_ID: {"rich_text": [{"type": "text", "text": {"content": gmail_message_id}}]},
+        config.BD_PROP_NOTES: {"rich_text": [{"type": "text", "text": {"content": notes[:2000]}}]},
+        config.BD_PROP_STATUS: {"status": {"name": config.BD_STATUS_NEW}},
+        config.BD_PROP_SELECT: {"select": {"name": config.BD_SELECT_VALUE}},
+    }
+    page = client.create_page(config.BD_DATABASE_ID, properties)
+    return page["id"]
 
 
 if __name__ == "__main__":

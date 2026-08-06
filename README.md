@@ -101,8 +101,9 @@ actually land in Slack rather than just being logged.
   of being skipped.
 - **Notion side**: `append_action_log()` is a no-op if the Action Log
   already ends with the line being appended, so a retried write after a
-  partial failure won't duplicate the entry. `stage_bd_candidate()`
-  deduplicates on the Gmail message ID.
+  partial failure won't duplicate the entry. `create_bd_candidate()` checks
+  for an existing page with the same `gmail_message_id` before creating, so
+  reruns never produce a duplicate BD Database row.
 
 ## Classification & matching
 
@@ -112,39 +113,46 @@ implemented exactly as specified in the build brief, with every match
 decision logged (`match_rung` + detail) for audit. Genuine replies with no
 Pipeline match are dropped as Irrelevant and logged, never written.
 
-Per the explicit design decision in the brief: bounces and auto-replies
-write to the Pipeline DB automatically; anything that would move a lead into
-the **BD Database** (an `interested` classification) is staged to
-`state/staged_bd_migrations.jsonl` for manual review rather than
-auto-created — see "Open questions" below for where that staging should
-actually live long-term.
+Bounces and auto-replies write to the Pipeline DB automatically. `interested`
+replies do two things: set the Pipeline lead's `Status → Replied`, and
+**auto-create a page in the BD Database** (`Status = "Not started"`,
+idempotent on `gmail_message_id`) rather than staging locally — this was a
+deliberate change from the original brief's "stage for review, don't
+auto-create" default. The live BD Database schema already has a
+`gmail_message_id` field purpose-built for this, and once shown that, the
+call was made to auto-create directly. `declined` and `unsubscribe` still
+only ever touch the Pipeline DB.
 
-## Open questions — flagged per the build brief, not assumed
+## Confirmed against the live workspace (2026-08-07)
 
-1. **Pipeline property names.** `PIPELINE_PROP_EMAIL` / `_COMPANY` /
-   `_STATUS` / `_ACTION_LOG` in `.env` default to `Email`, `Company Name`,
-   `Status`, `Action Log` per the brief's description. Run
-   `python main.py --schema-check` against the live database and confirm —
-   flag any mismatch and I'll update the defaults.
-2. **Polling interval.** Cron example above uses 15 minutes as instructed.
-   Gmail API quota (250 quota units/user/second; `messages.list` = 5 units,
-   `messages.get` = 5 units) comfortably supports this even with a full
-   inbox re-list each run — not a concern at this volume. Flag if you'd
-   rather poll less often.
-3. **Where staged BD Database candidates should live.** Currently a local
-   JSONL file (`state/staged_bd_migrations.jsonl`) plus a mention in each
-   Slack digest. Alternatives: a dedicated Notion database/view you triage
-   from directly, or Slack-digest-only with no local file. Local file was
-   chosen as the simplest default that doesn't touch the BD Database
-   automatically — confirm or redirect.
-4. **Action Log line format for reply-driven events.** The brief's
-   `Sends: N / Last send: DD Mon YYYY` template describes entries written by
-   whatever tool sends the outreach — this service never sends anything, so
-   it has no authoritative send count and does not fabricate one. Instead it
-   appends a plain dated note line (e.g. `06 Aug 2026: Bounce detected from
-   inbound message (...)`) below existing content, leaving prior
-   `Sends / Last send` lines untouched. Confirm this convention or specify
-   the exact format you want for monitor-generated lines.
+These were open questions in the original brief, now resolved by actually
+querying the live schema (`python main.py --schema-check`) rather than
+guessing:
+
+- **Pipeline property names**: `Email` (email), `Name` (title — this is the
+  company/lead identifier; there is no separate "Company Name" field),
+  `Status` (select), `Action Log` (rich_text). All match the code defaults.
+- **BD Database ID**: the ID in the original brief
+  (`3215734a-d555-8015-8f98-ec27cd7249e6`) was actually a *page*, not the
+  database. The real database ID is `3215734a-d555-80f7-a2a1-c4de6375a2ab`,
+  found via `/v1/search` against the live integration.
+- **BD Database candidate destination**: auto-create directly (see above),
+  not a local file — decided once the live schema showed a purpose-built
+  `gmail_message_id` field.
+- **Polling interval**: 15 minutes as instructed. Gmail API quota (250 quota
+  units/user/second; `messages.list` = 5 units, `messages.get` = 5 units)
+  comfortably supports this — not a concern at this volume.
+
+## Still open
+
+- **Action Log line format for reply-driven events.** The brief's
+  `Sends: N / Last send: DD Mon YYYY` template describes entries written by
+  whatever tool sends the outreach — this service never sends anything, so
+  it has no authoritative send count and does not fabricate one. Instead it
+  appends a plain dated note line (e.g. `06 Aug 2026: Bounce detected from
+  inbound message (...)`) below existing content, leaving prior
+  `Sends / Last send` lines untouched. Confirm this convention or specify
+  the exact format you want for monitor-generated lines.
 
 ## Non-negotiables checklist
 

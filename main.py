@@ -163,23 +163,25 @@ def _process_message(msg, leads, notion_client, anthropic_client, dry_run, summa
     lead = match.lead
     if intent == "interested":
         line = notion_write.format_event_log_line(
-            f"Genuine reply — interested ({msg.subject!r}). BD DB candidate staged for review."
+            f"Genuine reply — interested ({msg.subject!r}). Created in BD Database."
         )
-        bd_entry = {
-            "gmail_message_id": msg.id, "gmail_thread_id": msg.thread_id,
-            "pipeline_page_id": lead.page_id, "company_name": lead.company_name,
-            "email": msg.from_email, "sender_name": msg.from_name, "subject": msg.subject,
-            "reasoning": intent_result.get("reasoning", ""), "detected_at": datetime.now(timezone.utc).isoformat(),
-        }
+        bd_notes = (
+            f"Auto-created from inbound reply on {datetime.now().strftime('%d %b %Y')}.\n"
+            f"Subject: {msg.subject}\n"
+            f"From: {msg.raw_from}\n"
+            f"Reasoning: {intent_result.get('reasoning', '')}\n"
+            f"Pipeline record: {lead.page_id}"
+        )
+        bd_name = lead.company_name or msg.from_name or msg.from_email
         if dry_run:
-            log.info("[DRY RUN] Would set status=Replied, append action log, and stage BD candidate for %s", lead.page_id)
+            log.info("[DRY RUN] Would set status=Replied, append action log, and create BD Database entry for %s", lead.page_id)
         else:
             notion_write.set_status(notion_client, lead, config.STATUS_REPLIED)
             notion_write.append_action_log(notion_client, lead, line)
-            notion_write.stage_bd_candidate(bd_entry)
+            notion_write.create_bd_candidate(notion_client, lead, msg.id, msg.from_email, bd_name, bd_notes)
         summary["flagged"].append({
             "kind": "interested", "company": lead.company_name, "email": msg.from_email,
-            "subject": msg.subject, "reason": "Staged as BD Database candidate — needs your approval to move.",
+            "subject": msg.subject, "reason": "Created in BD Database (Status = Not started).",
         })
 
     elif intent == "declined":

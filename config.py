@@ -55,6 +55,21 @@ STATUS_REPLIED = "Replied"
 STATUS_CLOSED_LOST = "Closed-Lost"
 STATUS_DNC = "Do Not Contact"
 
+# BD Database property names, confirmed against the live schema on
+# 2026-08-07. "interested" replies are auto-created here (idempotent on
+# BD_PROP_GMAIL_MESSAGE_ID) per explicit user decision — the "stage only,
+# never auto-create" default from the original brief was superseded once
+# the live schema showed this database already has a gmail_message_id field
+# purpose-built for this.
+BD_PROP_NAME = os.getenv("BD_PROP_NAME", "Name")
+BD_PROP_EMAIL = os.getenv("BD_PROP_EMAIL", "Email")
+BD_PROP_GMAIL_MESSAGE_ID = os.getenv("BD_PROP_GMAIL_MESSAGE_ID", "gmail_message_id")
+BD_PROP_NOTES = os.getenv("BD_PROP_NOTES", "Notes")
+BD_PROP_STATUS = os.getenv("BD_PROP_STATUS", "Status")
+BD_PROP_SELECT = os.getenv("BD_PROP_SELECT", "Select")
+BD_STATUS_NEW = os.getenv("BD_STATUS_NEW", "Not started")
+BD_SELECT_VALUE = os.getenv("BD_SELECT_VALUE", "BD")
+
 # --- Anthropic ---
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-5")
@@ -64,7 +79,6 @@ SLACK_WEBHOOK_URL = os.getenv("SLACK_WEBHOOK_URL", "")
 
 # --- Local state ---
 STATE_FILE_PATH = _path("STATE_FILE_PATH", "state/watermark.json")
-STAGED_BD_FILE_PATH = _path("STAGED_BD_FILE_PATH", "state/staged_bd_migrations.jsonl")
 LOG_FILE_PATH = _path("LOG_FILE_PATH", "logs/palad_lead_monitor.log")
 
 # --- Deterministic classification patterns ---
