@@ -1,0 +1,10 @@
+.env
+credentials.json
+token.json
+state/watermark.json
+state/staged_bd_migrations.jsonl
+logs/*.log*
+__pycache__/
+*.pyc
+.venv/
+venv/
